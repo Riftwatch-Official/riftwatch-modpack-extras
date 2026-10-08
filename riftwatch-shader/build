@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+import hashlib
+import io
+import pathlib
+import sys
+import urllib.request
+import zipfile
+
+repository = pathlib.Path(__file__).resolve().parent.parent
+source_url = "https://cdn.modrinth.com/data/BUxf36AP/versions/jIbGxrnZ/Mellow%20v3.4.1a.zip"
+source_sha512 = "d9ded566950e9f67de1084c5df748e2bd37bcc15234f4f9b6f026faf9ee2eef7f84c09fc9de1ac25107d900051d555490a4c3d6888b82afbc4888d53610e8387"
+output = repository / "output" / "Riftwatch-Shader-3.4.1a.zip"
+blocked_profile = b"profile.FAST="
+notice_name = "RIFTWATCH.txt"
+notice = (
+    "Riftwatch Shader 3.4.1a is the shader pack Mellow v3.4.1a by TheCMK "
+    "(https://modrinth.com/shader/mellow, source https://codeberg.org/TheCMK/mellow-shader), "
+    "shipped in the Riftwatch modpack under the original licence in LICENSE. "
+    "Change: the Fast profile is removed, because its settings let players see through "
+    "Distant Horizons terrain. Nothing else is changed.\n"
+).encode()
+fixed_time = (2026, 10, 6, 0, 0, 0)
+
+
+def fail(message):
+    print(f"riftwatch-shader/build: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def source_bytes():
+    request = urllib.request.Request(source_url, headers={"User-Agent": "riftwatch-modpack-extras/1.0"})
+    with urllib.request.urlopen(request) as response:
+        data = response.read()
+    if hashlib.sha512(data).hexdigest() != source_sha512:
+        fail("checksum mismatch for the Mellow download")
+    return data
+
+
+def patched(name, data):
+    if not name.startswith("shaders/") or not (name.endswith(".properties") or name.endswith(".lang")):
+        return data, 0
+    lines = data.split(b"\n")
+    kept = [line for line in lines if not line.lstrip().startswith(blocked_profile)]
+    return b"\n".join(kept), len(lines) - len(kept)
+
+
+def build(data):
+    removed = 0
+    result = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(result, "w", zipfile.ZIP_DEFLATED) as target:
+        if notice_name in source.namelist():
+            fail(f"{notice_name} exists in the source pack")
+        for info in sorted(source.infolist(), key=lambda item: item.filename):
+            if info.is_dir():
+                continue
+            content, count = patched(info.filename, source.read(info.filename))
+            removed += count
+            entry = zipfile.ZipInfo(info.filename, fixed_time)
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.external_attr = 0o644 << 16
+            target.writestr(entry, content)
+        entry = zipfile.ZipInfo(notice_name, fixed_time)
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        entry.external_attr = 0o644 << 16
+        target.writestr(entry, notice)
+    if removed == 0:
+        fail("no Fast profile found, the source changed")
+    return result.getvalue(), removed
+
+
+def main():
+    content, removed = build(source_bytes())
+    output.parent.mkdir(exist_ok=True)
+    output.write_bytes(content)
+    print(f"wrote output/{output.name} ({len(content)} bytes, {removed} Fast profile lines removed)")
+    print(f"sha512 {hashlib.sha512(content).hexdigest()}")
+
+
+main()
