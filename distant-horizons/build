@@ -19,6 +19,8 @@ output = repository / "output" / f"DistantHorizons-{patched_version}-1.21.1-fabr
 gl_state_class = "com/seibel/distanthorizons/common/render/openGl/glObject/GLState.class"
 gl_get_polygon_mode = re.compile(rb"\xb2..\x11\x0b\x40\xb9..\x02\x00(\xb5..)", re.DOTALL)
 gl_fill_constant = b"\x11\x1b\x02" + b"\x00" * 8
+chunky_accessor_class = "com/seibel/distanthorizons/neoforge/wrappers/modAccessor/ChunkyAccessor.class"
+chunky_bind = re.compile(rb"\xb8..\xb6..\x2a\xba..\x00\x00\xb9..\x02\x00\xb1", re.DOTALL)
 
 
 def fail(message):
@@ -53,6 +55,17 @@ def patch_gl_state(data):
     return data[: match.start()] + replacement + data[match.end():]
 
 
+def patch_chunky_accessor(data):
+    matches = list(chunky_bind.finditer(data))
+    if len(matches) != 1:
+        fail(f"expected one Chunky listener binding in {chunky_accessor_class}, found {len(matches)}")
+    if b"StackMapTable" in data:
+        fail(f"{chunky_accessor_class} has a stack map table, the nop patch needs straight code")
+    match = matches[0]
+    replacement = b"\x00" * (len(match.group(0)) - 1) + b"\xb1"
+    return data[: match.start()] + replacement + data[match.end():]
+
+
 def patch_neoforge_manifest(data):
     data = replace_once("neoforge.mods.toml", data, f'version = "{source_version}"'.encode(), f'version = "{patched_version}"'.encode())
     return replace_once("neoforge.mods.toml", data, b'displayName = "Distant Horizons"', f'displayName = "{patched_name}"'.encode())
@@ -65,6 +78,7 @@ def patch_fabric_manifest(data):
 
 patches = {
     gl_state_class: patch_gl_state,
+    chunky_accessor_class: patch_chunky_accessor,
     "META-INF/neoforge.mods.toml": patch_neoforge_manifest,
     "fabric.mod.json": patch_fabric_manifest,
 }
