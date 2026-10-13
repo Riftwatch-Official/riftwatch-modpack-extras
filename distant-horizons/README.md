@@ -2,6 +2,8 @@
 
 An unofficial build of [Distant Horizons](https://gitlab.com/distant-horizons-team/distant-horizons) 3.3.3 for Minecraft 1.21.1 (Fabric and NeoForge), made for the Riftwatch modpack. Distant Horizons is free software by the Distant Horizons team under the GNU Lesser General Public License version 3 (`LICENSE.LESSER.txt`, which refers to `LICENSE.txt`); its logos are by Pankakes under CC BY-SA 4.0 (`LICENSE-LOGOS.txt`). This modified version is distributed under the same licence.
 
+Known problem: on macOS this 3.3.3 build renders no LODs (DH's renderer setup stops after "Setting DH Rendering API to: [OPEN_GL]...", every level load fails with "Failed to load client level", and leaving a world crashes the game). This comes from 3.3.3 itself, not from the changes below; upstream reworked that code after 3.3.3. The Riftwatch modpack therefore uses `3.2.0-b-patched` (release `distant-horizons-3.2.0-b-patched`, built by `build` at tag `distant-horizons-3.2.0-b-patched`).
+
 ## Modification Notice
 
 Modified by Riftwatch on 2026-10-13.
