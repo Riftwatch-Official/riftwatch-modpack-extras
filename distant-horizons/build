@@ -2,35 +2,23 @@
 import hashlib
 import io
 import pathlib
+import re
 import sys
 import urllib.request
 import zipfile
 
 repository = pathlib.Path(__file__).resolve().parent.parent
-source_name = "DistantHorizons-3.2.0-b-1.21.1-fabric-neoforge.jar"
-source_url = f"https://cdn.modrinth.com/data/uCdwusMi/versions/ZpKb4kZp/{source_name}"
-source_sha512 = "d4199f92f992fbd2c75a3b0e4e81c8a98bee889013f7347f2149ffa62c86748bde22135e9b2c82a10875db94fa576571c661c5ee16d2f567bd8a93d6f255fd22"
-source_version = "3.2.0-b"
-patched_version = "3.2.0-b-patched"
+source_version = "3.3.3"
+source_name = f"DistantHorizons-{source_version}-1.21.1-fabric-neoforge.jar"
+source_url = f"https://cdn.modrinth.com/data/uCdwusMi/versions/9w34y8ai/{source_name}"
+source_sha512 = "d14b32d3fd143a06514d6ad388eee11e9d657c84e1a937aaf8d033b1137fb43ef8b05cff1011a994cc42f3106823c51234f8bc18d72bb05bc317a20ea83c50ed"
+patched_version = f"{source_version}-patched"
 patched_name = "Distant Horizons (patched)"
 output = repository / "output" / f"DistantHorizons-{patched_version}-1.21.1-fabric-neoforge.jar"
 
-gl_get_polygon_mode = bytes.fromhex("110b40b80042b500ae")
-gl_fill_constant = bytes.fromhex("111b02000000b500ae")
-
-replacements = {
-    "com/seibel/distanthorizons/common/render/openGl/glObject/GLState.class": [
-        (gl_get_polygon_mode, gl_fill_constant),
-    ],
-    "META-INF/neoforge.mods.toml": [
-        (f'version = "{source_version}"'.encode(), f'version = "{patched_version}"'.encode()),
-        (b'displayName = "Distant Horizons"', f'displayName = "{patched_name}"'.encode()),
-    ],
-    "fabric.mod.json": [
-        (f'"version": "{source_version}"'.encode(), f'"version": "{patched_version}"'.encode()),
-        (b'"name": "Distant Horizons"', f'"name": "{patched_name}"'.encode()),
-    ],
-}
+gl_state_class = "com/seibel/distanthorizons/common/render/openGl/glObject/GLState.class"
+gl_get_polygon_mode = re.compile(rb"\xb2..\x11\x0b\x40\xb9..\x02\x00(\xb5..)", re.DOTALL)
+gl_fill_constant = b"\x11\x1b\x02" + b"\x00" * 8
 
 
 def fail(message):
@@ -47,15 +35,39 @@ def source_jar():
     return data
 
 
-def patch(name, data):
-    for old, new in replacements[name]:
-        if len(old) != len(new) and name.endswith(".class"):
-            fail(f"replacement in {name} changes the code length")
-        count = data.count(old)
-        if count != 1:
-            fail(f"expected one match in {name}, found {count}")
-        data = data.replace(old, new)
-    return data
+def replace_once(name, data, old, new):
+    count = data.count(old)
+    if count != 1:
+        fail(f"expected one match in {name}, found {count}")
+    return data.replace(old, new)
+
+
+def patch_gl_state(data):
+    matches = list(gl_get_polygon_mode.finditer(data))
+    if len(matches) != 1:
+        fail(f"expected one GL_POLYGON_MODE read in {gl_state_class}, found {len(matches)}")
+    match = matches[0]
+    replacement = gl_fill_constant + match.group(1)
+    if len(replacement) != len(match.group(0)):
+        fail(f"replacement in {gl_state_class} changes the code length")
+    return data[: match.start()] + replacement + data[match.end():]
+
+
+def patch_neoforge_manifest(data):
+    data = replace_once("neoforge.mods.toml", data, f'version = "{source_version}"'.encode(), f'version = "{patched_version}"'.encode())
+    return replace_once("neoforge.mods.toml", data, b'displayName = "Distant Horizons"', f'displayName = "{patched_name}"'.encode())
+
+
+def patch_fabric_manifest(data):
+    data = replace_once("fabric.mod.json", data, f'"version": "{source_version}"'.encode(), f'"version": "{patched_version}"'.encode())
+    return replace_once("fabric.mod.json", data, b'"name": "Distant Horizons"', f'"name": "{patched_name}"'.encode())
+
+
+patches = {
+    gl_state_class: patch_gl_state,
+    "META-INF/neoforge.mods.toml": patch_neoforge_manifest,
+    "fabric.mod.json": patch_fabric_manifest,
+}
 
 
 def main():
@@ -64,11 +76,11 @@ def main():
     with zipfile.ZipFile(io.BytesIO(source_jar())) as source, zipfile.ZipFile(patched, "w") as target:
         for info in source.infolist():
             data = source.read(info)
-            if info.filename in replacements:
-                data = patch(info.filename, data)
+            if info.filename in patches:
+                data = patches[info.filename](data)
                 done.add(info.filename)
             target.writestr(info, data, compress_type=info.compress_type)
-    missing = set(replacements) - done
+    missing = set(patches) - done
     if missing:
         fail(f"entries not found: {', '.join(sorted(missing))}")
     data = patched.getvalue()
